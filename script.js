@@ -1,72 +1,162 @@
-/* ---------------- MENU LOGIC ---------------- */
-function setupMenus() {
-    const sidebar = document.getElementById("sidebar");
-    const btn = document.getElementById("menu");
-    const overlay = document.getElementById("menu-overlay");
-    const closeBtn = document.getElementById("close-menu");
-
-    if (!sidebar || !btn) return;
-
-    function showMenu() {
-        sidebar.style.setProperty('display', 'flex', 'important');
-        if (overlay) overlay.style.display = "block";
-        document.body.style.overflow = "hidden";
-    }
-
-    function hideMenu() {
-        sidebar.style.setProperty('display', 'none', 'important');
-        if (overlay) overlay.style.display = "none";
-        document.body.style.overflow = "auto";
-    }
-
-    btn.onclick = (e) => {
-        e.stopPropagation();
-        const isHidden = window.getComputedStyle(sidebar).display === "none";
-        isHidden ? showMenu() : hideMenu();
-    };
-
-    if (overlay) overlay.onclick = hideMenu;
-    if (closeBtn) closeBtn.onclick = hideMenu;
-
-    Array.from(sidebar.getElementsByTagName("a")).forEach(link => {
-        link.onclick = hideMenu;
-    });
-}
-
-/* ---------------- API & DASHBOARD LOGIC ---------------- */
+/* ---------------- CONSTANTS & HEADERS ---------------- */
 const API_BASE_URL = "https://unamenable-nathan-telegnostic.ngrok-free.dev/api";
-let CURRENT_USER_ID = null;
-
 const NGROK_HEADERS = {
     "ngrok-skip-browser-warning": "69420",
     "Content-Type": "application/json",
     "Accept": "application/json"
 };
+let CURRENT_USER_ID = null;
 
-// Initialize on Load
-document.addEventListener("DOMContentLoaded", async () => {
-    console.log("VisionVault Initializing...");
+/* ---------------- INITIALIZATION ---------------- */
+document.addEventListener("DOMContentLoaded", () => {
     setupMenus();
-
+    
     const storedUserId = localStorage.getItem("user_id");
     if (!storedUserId) {
-        console.warn("User not logged in. Redirecting...");
-        // window.location.href = "login.html"; 
+        console.warn("No user_id found. Please log in.");
         return;
     }
 
     CURRENT_USER_ID = storedUserId;
-    
-    // Check Auth first, then load data
-    const isAuthenticated = await checkAuth(storedUserId);
-    if (isAuthenticated) {
-        checkAffiliateStatus();
-        loadProductsDropdown();
-    } else {
-        localStorage.removeItem("user_id");
-        console.error("Auth failed.");
-    }
+    initializeApp();
 });
+
+async function initializeApp() {
+    try {
+        // 1. Validate User & Get Dashboard Data
+        const response = await fetch(`${API_BASE_URL}/user/dashboard/${CURRENT_USER_ID}`, {
+            headers: NGROK_HEADERS
+        });
+        
+        if (!response.ok) return;
+        const data = await response.json();
+
+        // 2. DIGISTORE CHECK: If ID is missing, force the modal
+        if (!data.digistore_id) {
+            showAffiliateModal();
+        } else {
+            renderDashboard(data);
+            loadChartData(); // This draws the SVG lines
+            loadProductsDropdown();
+            setupEventListeners();
+        }
+    } catch (err) {
+        console.error("Initialization failed:", err);
+    }
+}
+
+/* ---------------- DASHBOARD & CHART ---------------- */
+function renderDashboard(data) {
+    if (document.getElementById("username")) document.getElementById("username").innerText = data.username;
+    if (document.getElementById("earnings")) document.getElementById("earnings").innerText = (data.sales_volume || 0).toLocaleString('de-DE');
+    if (document.getElementById("earnings-team")) document.getElementById("earnings-team").innerText = (data.team_volume || 0).toLocaleString('de-DE');
+    if (document.getElementById("earnings-sale")) document.getElementById("earnings-sale").innerText = data.sales_count || 0;
+    if (document.getElementById("earnings-clicks")) document.getElementById("earnings-clicks").innerText = data.clicks || 0;
+}
+
+async function loadChartData() {
+    try {
+        const res = await fetch(`${API_BASE_URL}/user/chart/${CURRENT_USER_ID}`, { headers: NGROK_HEADERS });
+        const data = await res.json(); 
+
+        const chartMain = document.getElementById("chart-main");
+        const lineElement = document.getElementById("chart-line");
+        if (!chartMain || !lineElement) return;
+
+        const chartWidth = chartMain.clientWidth;
+        const chartHeight = 200;
+        const points = [];
+
+        for (let i = 1; i <= 7; i++) {
+            const count = data[i-1]?.click_count || 0;
+            const bar = document.getElementById(`day${i}-bar`);
+            
+            // Update Bars
+            const heightPercent = Math.min((count / 30) * 100, 100);
+            if (bar) bar.style.height = `${heightPercent}%`;
+
+            // Calculate SVG Line Points
+            const xPos = ((i - 1) * (chartWidth / 7)) + ((chartWidth / 7) / 2);
+            const yPos = chartHeight - (heightPercent * (chartHeight / 100));
+            points.push(`${xPos},${yPos}`);
+        }
+        lineElement.setAttribute("points", points.join(" "));
+    } catch (e) { console.error("Chart Error:", e); }
+}
+
+/* ---------------- DIGISTORE MODAL ---------------- */
+function showAffiliateModal() {
+    if (document.getElementById("affiliate-overlay-modal")) return;
+
+    const modal = document.createElement("div");
+    modal.id = "affiliate-overlay-modal";
+    modal.style = `position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:99999;display:flex;justify-content:center;align-items:center;backdrop-filter:blur(10px);`;
+    modal.innerHTML = `
+        <div style="background:#111; padding:30px; border-radius:15px; border:1px solid #333; text-align:center; width:90%; max-width:350px;">
+            <h2 style="color:white; font-family:Tajawal;">Digistore24 ID Required</h2>
+            <p style="color:#888; margin:15px 0;">Enter your ID to sync your live sales data.</p>
+            <input id="ds-input" type="text" placeholder="Your ID" style="width:100%; padding:12px; background:#000; border:1px solid #444; color:white; border-radius:8px; margin-bottom:15px;">
+            <button id="ds-save" style="width:100%; padding:12px; background:#28a745; color:white; border:none; border-radius:8px; font-weight:bold; cursor:pointer;">Link Account</button>
+        </div>`;
+    document.body.appendChild(modal);
+
+    document.getElementById("ds-save").onclick = async () => {
+        const val = document.getElementById("ds-input").value.trim();
+        if (!val) return alert("Please enter an ID");
+
+        const res = await fetch(`${API_BASE_URL}/user/set-affiliate-id`, {
+            method: "POST",
+            headers: NGROK_HEADERS,
+            body: JSON.stringify({ user_id: CURRENT_USER_ID, affiliate_id: val })
+        });
+
+        if (res.ok) {
+            modal.remove();
+            location.reload();
+        } else {
+            alert("Error saving ID. Please try again.");
+        }
+    };
+}
+
+/* ---------------- MENU & UTILS ---------------- */
+function setupMenus() {
+    const sidebar = document.getElementById("sidebar");
+    const btn = document.getElementById("menu");
+    const close = document.getElementById("close-menu");
+    if (!sidebar || !btn) return;
+
+    btn.onclick = () => sidebar.style.display = "flex";
+    close.onclick = () => sidebar.style.display = "none";
+}
+
+function setupEventListeners() {
+    const genBtn = document.getElementById("generate-btn");
+    if (genBtn) genBtn.onclick = generateLink;
+}
+
+async function generateLink() {
+    const select = document.getElementById("product-select");
+    const productId = select?.value || "467275";
+    const res = await fetch(`${API_BASE_URL}/user/generate-link`, {
+        method: "POST",
+        headers: NGROK_HEADERS,
+        body: JSON.stringify({ user_id: CURRENT_USER_ID, product_id: productId })
+    });
+    const data = await res.json();
+    if (data.link) {
+        navigator.clipboard.writeText(data.link);
+        alert("Link copied: " + data.link);
+    }
+}
+
+async function loadProductsDropdown() {
+    const select = document.getElementById("product-select");
+    if (!select) return;
+    const res = await fetch(`${API_BASE_URL}/products`, { headers: NGROK_HEADERS });
+    const products = await res.json();
+    select.innerHTML = products.map(p => `<option value="${p.digistore_prod_id}">${p.product_name}</option>`).join('');
+}
 
 async function checkAuth(userId) {
     try {
