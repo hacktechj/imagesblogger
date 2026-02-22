@@ -1,9 +1,8 @@
 /* ---------------- MENU LOGIC ---------------- */
 function setupMenus() {
-    // UPDATED IDs to match your HTML
-    const sidebar = document.getElementById("sidebar"); // Changed from menu-list to sidebar
+    const sidebar = document.getElementById("sidebar");
     const btn = document.getElementById("menu");
-    const overlay = document.getElementById("menu-overlay"); // Ensure this exists or is handled
+    const overlay = document.getElementById("menu-overlay");
     const closeBtn = document.getElementById("close-menu");
 
     if (!sidebar || !btn) return;
@@ -20,22 +19,18 @@ function setupMenus() {
         document.body.style.overflow = "auto";
     }
 
-    btn.onclick = function(e) {
+    btn.onclick = (e) => {
         e.stopPropagation();
-        if (sidebar.style.display !== "flex") {
-            showMenu();
-        } else {
-            hideMenu();
-        }
+        const isHidden = window.getComputedStyle(sidebar).display === "none";
+        isHidden ? showMenu() : hideMenu();
     };
 
     if (overlay) overlay.onclick = hideMenu;
     if (closeBtn) closeBtn.onclick = hideMenu;
 
-    const links = sidebar.getElementsByTagName("a");
-    for (let link of links) {
+    Array.from(sidebar.getElementsByTagName("a")).forEach(link => {
         link.onclick = hideMenu;
-    }
+    });
 }
 
 /* ---------------- API & DASHBOARD LOGIC ---------------- */
@@ -44,208 +39,147 @@ let CURRENT_USER_ID = null;
 
 const NGROK_HEADERS = {
     "ngrok-skip-browser-warning": "69420",
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "Accept": "application/json"
 };
 
+// Initialize on Load
 document.addEventListener("DOMContentLoaded", async () => {
+    console.log("VisionVault Initializing...");
     setupMenus();
 
     const storedUserId = localStorage.getItem("user_id");
-
     if (!storedUserId) {
-        return;
-    }
-
-    const isAuthenticated = await checkAuth(storedUserId);
-    if (!isAuthenticated) {
-        localStorage.removeItem("user_id");
-        window.location.href = "login.html";
+        console.warn("User not logged in. Redirecting...");
+        // window.location.href = "login.html"; 
         return;
     }
 
     CURRENT_USER_ID = storedUserId;
-    checkAffiliateStatus();
-    loadProductsDropdown();
+    
+    // Check Auth first, then load data
+    const isAuthenticated = await checkAuth(storedUserId);
+    if (isAuthenticated) {
+        checkAffiliateStatus();
+        loadProductsDropdown();
+    } else {
+        localStorage.removeItem("user_id");
+        console.error("Auth failed.");
+    }
 });
 
 async function checkAuth(userId) {
-    if (!userId || userId === "undefined") return false;
     try {
-        const url = `${API_BASE_URL}/auth/me?user_id=${userId}`;
-        const res = await fetch(url, {
-            method: "GET",
-            headers: {
-                "ngrok-skip-browser-warning": "69420",
-                "Accept": "application/json"
-            }
+        const res = await fetch(`${API_BASE_URL}/auth/me?user_id=${userId}`, {
+            headers: NGROK_HEADERS
         });
-        if (!res.ok) return false;
         const data = await res.json();
-        return data && data.user_id == userId;
-    } catch (e) {
-        return false;
-    }
+        return res.ok && data.user_id == userId;
+    } catch (e) { return false; }
 }
 
 async function checkAffiliateStatus() {
     try {
         const response = await fetch(`${API_BASE_URL}/user/dashboard/${CURRENT_USER_ID}`, {
-            headers: { "ngrok-skip-browser-warning": "true" }
+            headers: NGROK_HEADERS
         });
-        if (!response.ok) return;
         
+        if (!response.ok) throw new Error("Dashboard fetch failed");
         const data = await response.json();
 
-        if (!data.digistore_id) {
+        // CRITICAL: If Digistore ID is missing, force the modal
+        if (!data.digistore_id || data.digistore_id === "") {
+            console.log("Digistore ID missing. Showing modal...");
             showAffiliateModal();
         } else {
+            console.log("Digistore ID found. Loading Dashboard.");
             renderDashboard(data);
             loadChartData();
             loadAchievements(); 
             setupEventListeners();
         }
-    } catch (error) {}
-}
-
-async function updateLiveStats() {
-    try {
-        const response = await fetch(`${API_BASE_URL}/user/dashboard/${CURRENT_USER_ID}`, {
-            headers: { "ngrok-skip-browser-warning": "true" }
-        });
-        if (response.ok) {
-            const data = await response.json();
-            renderDashboard(data);
-            loadChartData();
-        }
-    } catch (error) {}
-}
-
-function renderDashboard(data) {
-    const greetings = document.getElementById("greetings");
-    if (greetings) {
-        // Targeted the internal span 'username' to keep 'Good Day' static
-        const nameSpan = document.getElementById("username");
-        if (nameSpan) nameSpan.innerText = data.username;
-        else greetings.innerText = `Good Day, ${data.username}`;
+    } catch (error) {
+        console.error("Affiliate Status Error:", error);
     }
+}
+
+async function showAffiliateModal() {
+    if (document.getElementById("affiliate-overlay")) return;
+
+    const overlay = document.createElement("div");
+    overlay.id = "affiliate-overlay";
+    overlay.style = `position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);z-index:10000;display:flex;justify-content:center;align-items:center;backdrop-filter:blur(8px);`;
     
-    const earnings = document.getElementById("earnings");
-    if (earnings) earnings.innerText = (data.sales_volume || 0).toLocaleString('de-DE');
+    overlay.innerHTML = `
+        <div style="background:#1a1a1a;padding:40px;border-radius:15px;text-align:center;border:1px solid #333;max-width:400px;width:90%;box-shadow: 0 10px 30px rgba(0,0,0,0.5);">
+            <h2 style="color:white;margin-bottom:10px;font-family:Tajawal, sans-serif;">Link Your Account</h2>
+            <p style="color:#aaa;margin-bottom:20px;">Enter your Digistore24 ID to sync your sales data.</p>
+            <input id="modal-ds-id" placeholder="Digistore24 ID" style="padding:12px;width:100%;margin-bottom:10px;border-radius:5px;border:1px solid #444;background:#000;color:white;outline:none;">
+            <p id="modal-error" style="color:#ff4444;font-size:13px;display:none;margin-bottom:10px;"></p>
+            <button id="save-ds-btn" style="padding:12px 30px;width:100%;background:#28a745;color:white;border:none;border-radius:5px;cursor:pointer;font-weight:bold;transition:0.3s;">Save & Continue</button>
+        </div>`;
+    
+    document.body.appendChild(overlay);
 
-    const teamSales = document.getElementById("earnings-team"); 
-    if (teamSales) teamSales.innerText = (data.team_volume || 0).toLocaleString('de-DE');
+    const btn = document.getElementById("save-ds-btn");
+    const input = document.getElementById("modal-ds-id");
+    const errorMsg = document.getElementById("modal-error");
 
-    const salesCount = document.getElementById("earnings-sale"); 
-    if (salesCount) salesCount.innerText = data.sales_count || 0;
+    btn.onclick = async () => {
+        const affId = input.value.trim();
+        if (!affId) {
+            errorMsg.innerText = "Please enter your ID";
+            errorMsg.style.display = "block";
+            return;
+        }
 
-    const clickCount = document.getElementById("earnings-clicks");
-    if (clickCount) {
-        clickCount.innerText = data.clicks !== undefined ? data.clicks : 0;
-    }
+        btn.innerText = "Syncing...";
+        btn.disabled = true;
+
+        try {
+            const res = await fetch(`${API_BASE_URL}/user/set-affiliate-id`, {
+                method: "POST",
+                headers: NGROK_HEADERS,
+                body: JSON.stringify({ 
+                    user_id: CURRENT_USER_ID, 
+                    affiliate_id: affId 
+                })
+            });
+
+            const result = await res.json();
+
+            if (res.ok && result.status === "success") {
+                overlay.remove();
+                location.reload(); // Refresh to populate dashboard
+            } else {
+                errorMsg.innerText = result.message || "Could not link ID.";
+                errorMsg.style.display = "block";
+                btn.innerText = "Save & Continue";
+                btn.disabled = false;
+            }
+        } catch (e) {
+            errorMsg.innerText = "Server Error. Try again later.";
+            errorMsg.style.display = "block";
+            btn.disabled = false;
+        }
+    };
+}
+
+/* ---------------- RENDERING HELPERS ---------------- */
+function renderDashboard(data) {
+    document.getElementById("username").innerText = data.username || "Affiliate";
+    document.getElementById("earnings").innerText = (data.sales_volume || 0).toLocaleString('de-DE');
+    document.getElementById("earnings-team").innerText = (data.team_volume || 0).toLocaleString('de-DE');
+    document.getElementById("earnings-sale").innerText = data.sales_count || 0;
+    document.getElementById("earnings-clicks").innerText = data.clicks || 0;
 
     const clickPercent = document.getElementById("usd-clicks");
     if (clickPercent) {
-        const goal = 100; 
-        const currentClicks = data.clicks || 0;
-        const percentage = Math.min((currentClicks / goal) * 100, 100).toFixed(1);
+        const percentage = Math.min(((data.clicks || 0) / 100) * 100, 100).toFixed(1);
         clickPercent.innerText = `${percentage}%`;
     }
 }
 
-async function loadProductsDropdown() {
-    const select = document.getElementById("product-select");
-    if (!select) return;
-    try {
-        const res = await fetch(`${API_BASE_URL}/products`, {
-            headers: { "ngrok-skip-browser-warning": "true" }
-        });
-        const products = await res.json();
-        select.innerHTML = "";
-        products.forEach(prod => {
-            const option = document.createElement("option");
-            option.value = prod.digistore_prod_id;
-            option.innerText = prod.product_name;
-            select.appendChild(option);
-        });
-    } catch (e) {}
-}
-
-async function generateLink() {
-    const select = document.getElementById("product-select");
-    const productId = (select && select.value) ? select.value : "467275";
-    
-    try {
-        const response = await fetch(`${API_BASE_URL}/user/generate-link`, {
-            method: "POST",
-            headers: NGROK_HEADERS,
-            body: JSON.stringify({ 
-                user_id: CURRENT_USER_ID, 
-                product_id: productId 
-            })
-        });
-
-        const data = await response.json();
-
-        if (data.link) {
-            await navigator.clipboard.writeText(data.link);
-            alert(`Link copied for Product ID ${productId}:\n${data.link}`);
-        } else {
-            alert("Error: " + (data.error || "Failed to generate link"));
-        }
-    } catch (error) {
-        alert("Connection error. Please try again.");
-    }
-}
-
-async function loadAchievements() {
-    const categorySelect = document.getElementById("achievements");
-    const activeKey = categorySelect ? categorySelect.value : "clicks";
-    try {
-        const response = await fetch(`${API_BASE_URL}/user/achievements/${CURRENT_USER_ID}`, {
-            headers: { "ngrok-skip-browser-warning": "true" }
-        });
-        if (!response.ok) return;
-        
-        const allData = await response.json();
-        const progressList = allData[activeKey];
-        if (!progressList) return;
-
-        const currentVal = progressList[0].current; 
-        let nextMilestone = progressList.find(m => m.status === "locked") || progressList[progressList.length - 1];
-        let diff = nextMilestone.milestone - currentVal;
-        
-        const pathStats = document.getElementById("path-stats");
-        if (pathStats) {
-            pathStats.innerText = `You have ${currentVal} out of ${nextMilestone.milestone}. ${diff > 0 ? diff + ' more for next reward' : 'All milestones reached!'}`;
-        }
-
-        progressList.forEach((item, index) => {
-            const btn = document.getElementById(`reward-received${index + 1}`);
-            if (btn) {
-                btn.innerText = item.status === "claimed" ? "Claimed" : 
-                                item.status === "available" ? "Collect Reward" : "Locked";
-                btn.disabled = item.status !== "available";
-                btn.style.backgroundColor = item.status === "available" ? "#28a745" : "";
-                btn.style.color = item.status === "available" ? "white" : "";
-            }
-        });
-    } catch (error) {}
-}
-
-async function collectReward(category, milestone) {
-    try {
-        const response = await fetch(`${API_BASE_URL}/user/achievements/collect`, {
-            method: "POST",
-            headers: NGROK_HEADERS,
-            body: JSON.stringify({ user_id: CURRENT_USER_ID, category, milestone })
-        });
-        const data = await response.json();
-        if (data.status === "success") {
-            window.open(data.reward_url, "_blank");
-            loadAchievements();
-        }
-    } catch (error) {}
-}
 
 async function loadChartData() {
     try {
