@@ -53,7 +53,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     const storedUserId = localStorage.getItem("user_id");
 
     if (!storedUserId) {
-        window.location.href = "login.html";
         return;
     }
 
